@@ -1,11 +1,40 @@
 <html>
+
 <head>
+    <style>
+        .topology {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .topology__circle-root {
+            border-radius: 50%;
+            border: 3px solid black;
+            box-sizing: border-box;
+        }
+
+        .circle {
+            border-radius: 50%;
+            background: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid black;
+            position: absolute;
+            box-sizing: border-box;
+        }
+    </style>
 
     <script>
         // Model different servers, and network connections.
         class Server {
             constructor(name) {
-                if ( !name ) {
+                if (!name) {
                     name = Math.random().toString(16).slice(2);
                 }
                 this.name = name;
@@ -41,26 +70,108 @@
         }
 
         class TopologyRenderer {
-            constructor(servers, links) {
+            /*
+                servers: Server[]
+                links: NetworkLink[]
+                options: { layout: 'circle' }
+            */
+            constructor(servers, links, options) {
                 this.servers = servers;
                 this.links = links;
+
+                this.options = Object.assign({
+                    layout: 'circle',
+                    domRoot: undefined
+                },
+                    options,
+                );
+
+                if (!this.options.domRoot) {
+                    throw new Error("Must provide options.domRoot.");
+                }
+            }
+
+            render() {
+                switch (this.options.layout) {
+                    case 'circle':
+                        return this.renderCircle();
+                        break;
+                    default:
+                        throw new Error("Non-supported layout strategy: " + this.options.layout)
+                }
+            }
+
+            // translate coordinates that are centered about (0, 0)
+            // to CSS positioning coordinates - (left, bottom)
+            translateCoords([x, y], frameWidth, frameHeight) {
+                return [x + frameWidth / 2, y + frameHeight / 2];
+            }
+
+            circleBottomLeft([x, y], diameter) {
+                return [x - diameter / 2, y - diameter / 2];
+            }
+
+            renderCircle() {
+                // layout the servers in a circle.
+                let html = '';
+
+                const greatCircleDiameter = 100 + 50 * this.servers.length;
+                const smallCircleDiameter = 120;
+                const frameSize = greatCircleDiameter + smallCircleDiameter;
+
+                const centerCoordinatesByServer = [];
+
+                const [gx, gy] = this.translateCoords(
+                        this.circleBottomLeft([0, 0], greatCircleDiameter),
+                        frameSize,
+                        frameSize
+                    );
+
+                html += `<div class="topology" style="width:${frameSize}px; height: ${frameSize}px">`;
+                html += `<div class="topology__circle-root" style="width:${greatCircleDiameter}px; height: ${greatCircleDiameter}px; left: ${gx}px; bottom: ${gy}px;">`;
+                for (let i = 0; i < this.servers.length; ++i) {
+                    // determine the coordinates of this server.
+                    // arranged as circles spaced about the perimeter of the great circle.
+
+                    const centerAngle = (i / this.servers.length) * 2 * Math.PI;
+                    const x = Math.cos(centerAngle) * greatCircleDiameter / 2;
+                    const y = Math.sin(centerAngle) * greatCircleDiameter / 2;
+
+                    centerCoordinatesByServer.push([x, y]);
+
+                    const [dx, dy] = this.translateCoords(
+                        this.circleBottomLeft([x, y], smallCircleDiameter),
+                        frameSize,
+                        frameSize
+                    );
+
+                    html += `<div class="server circle" style="left: ${dx}px; bottom: ${dy}px; width: ${smallCircleDiameter}px; height: ${smallCircleDiameter}px">`;
+                    html += this.servers[i].name;
+                    html += '</div>';
+
+                }
+
+                html += '</div>';
+
+                this.options.domRoot.innerHTML = html;
+
             }
 
 
         }
 
 
-
+        // A gossip protocol
         function main() {
             gossipers = [];
 
-            for ( let i = 0; i < 1000; ++i ) {
+            for (let i = 0; i < 10; ++i) {
                 gossipers.push(new GossipProtocolNode());
             }
 
             // topology: random connections. 
-            for ( const gossiper of gossipers ) {
-                for ( var i = 0; i < 3; ++i ) {
+            for (const gossiper of gossipers) {
+                for (var i = 0; i < 1; ++i) {
                     link = new NetworkLink();
                     other = gossipers[Math.random() * gossipers.length | 0];
                     gossiper.connectTo(other, link);
@@ -69,14 +180,21 @@
 
             console.log(gossipers);
 
+            renderer = new TopologyRenderer(gossipers, link, {
+                domRoot: document.getElementById('topology-root'),
+                layout: 'circle'
+            })
+            renderer.render();
+
         }
 
 
     </script>
 </head>
+
 <body>
 
-    <div id="topology-root" >
+    <div id="topology-root">
 
     </div>
 
@@ -84,4 +202,5 @@
         main();
     </script>
 </body>
+
 </html>

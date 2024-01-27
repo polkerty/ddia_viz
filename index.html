@@ -1,0 +1,87 @@
+<html>
+<head>
+
+    <script>
+        // Model different servers, and network connections.
+        class Server {
+            constructor(name) {
+                if ( !name ) {
+                    name = Math.random().toString(16).slice(2);
+                }
+                this.name = name;
+                this.netLinks = [];
+            }
+
+            connectTo(otherServer, networkLink) {
+                // TODO: check for duplicate / conflicting connections.
+                // this is just a quick way to set up the topology.
+                networkLink.a = this;
+                networkLink.b = otherServer;
+                this.netLinks.push(networkLink);
+                otherServer.netLinks.push(networkLink);
+            }
+        }
+
+        class NetworkLink {
+            constructor(name) {
+                this.name = name || Math.random().toString(16).slice(2);
+                this.a = null;
+                this.b = null;
+            }
+        }
+
+        class DatabaseNode extends Server {
+
+        }
+
+        class GossipProtocolNode extends Server {
+            constructor(name) {
+                super(name);
+            }
+        }
+
+        class TopologyRenderer {
+            constructor(servers, links) {
+                this.servers = servers;
+                this.links = links;
+            }
+
+
+        }
+
+
+
+        function main() {
+            gossipers = [];
+
+            for ( let i = 0; i < 1000; ++i ) {
+                gossipers.push(new GossipProtocolNode());
+            }
+
+            // topology: random connections. 
+            for ( const gossiper of gossipers ) {
+                for ( var i = 0; i < 3; ++i ) {
+                    link = new NetworkLink();
+                    other = gossipers[Math.random() * gossipers.length | 0];
+                    gossiper.connectTo(other, link);
+                }
+            }
+
+            console.log(gossipers);
+
+        }
+
+
+    </script>
+</head>
+<body>
+
+    <div id="topology-root" >
+
+    </div>
+
+    <script>
+        main();
+    </script>
+</body>
+</html>

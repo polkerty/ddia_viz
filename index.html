@@ -14,7 +14,7 @@
 
         .topology__circle-root {
             border-radius: 50%;
-            border: 3px solid black;
+            border: 3px solid transparent;
             box-sizing: border-box;
         }
 
@@ -27,6 +27,15 @@
             border: 2px solid black;
             position: absolute;
             box-sizing: border-box;
+            z-index: 2;
+        }
+
+        .link {
+            transform-origin: top left;
+            height: 0px;
+            border: 1px solid black;
+            position: absolute;
+            z-index: 1;
         }
     </style>
 
@@ -119,7 +128,7 @@
                 const smallCircleDiameter = 120;
                 const frameSize = greatCircleDiameter + smallCircleDiameter;
 
-                const centerCoordinatesByServer = [];
+                const centerCoordinatesByServerName = {};
 
                 const [gx, gy] = this.translateCoords(
                         this.circleBottomLeft([0, 0], greatCircleDiameter),
@@ -137,7 +146,7 @@
                     const x = Math.cos(centerAngle) * greatCircleDiameter / 2;
                     const y = Math.sin(centerAngle) * greatCircleDiameter / 2;
 
-                    centerCoordinatesByServer.push([x, y]);
+                    centerCoordinatesByServerName[this.servers[i].name] = [x, y];
 
                     const [dx, dy] = this.translateCoords(
                         this.circleBottomLeft([x, y], smallCircleDiameter),
@@ -148,6 +157,43 @@
                     html += `<div class="server circle" style="left: ${dx}px; bottom: ${dy}px; width: ${smallCircleDiameter}px; height: ${smallCircleDiameter}px">`;
                     html += this.servers[i].name;
                     html += '</div>';
+
+                }
+
+                // now to draw the network links. 
+                for ( const link of this.links) {
+                    // Draw a line from the center of a's circle to the center of b's circle.
+                    // (but, ends at the edges of the circles.)
+
+                    const [ax, ay] = centerCoordinatesByServerName[link.a.name], [bx, by] = centerCoordinatesByServerName[link.b.name];
+
+                    const m = (ay - by) / (ax - bx);
+                    // y = m(x - ax) + ay
+                    // y = mx - max + ay
+                    // b = ay - m * ax
+                    const b = ay - (m * ax);
+
+                    // what is the angle between the two?
+                    const [lx, ly] = ax < bx ? [ax, ay] : [bx, by];
+                    const [rx, ry] = ax < bx ? [bx, by] : [ax, ay];
+
+
+                    const opposite = Math.abs(ry - ly);
+                    const hypotenuse = Math.sqrt((ax - bx)*(ax - bx) + (ay - by)*(ay - by));
+                    let angle = Math.asin(opposite/hypotenuse);
+
+                    if ( ly < ry ) {
+                        angle = -angle;
+                    }
+                    angle = Math.round(angle * 1000) / 1000;
+
+                    const [dx, dy] = this.translateCoords(
+                        [lx, ly],
+                        frameSize,
+                        frameSize
+                    );
+
+                    html += `<div class='link' data-id="${link.name}" style="transform: rotate(${angle}rad); width: ${Math.round(hypotenuse)}px; left: ${dx}px; bottom: ${dy}px;" ></div>`
 
                 }
 
@@ -164,6 +210,7 @@
         // A gossip protocol
         function main() {
             gossipers = [];
+            links = [];
 
             for (let i = 0; i < 10; ++i) {
                 gossipers.push(new GossipProtocolNode());
@@ -171,16 +218,26 @@
 
             // topology: random connections. 
             for (const gossiper of gossipers) {
-                for (var i = 0; i < 1; ++i) {
+                // fully connected
+                for (var i = 0; i < gossipers.length; ++i) {
+                    other = gossipers[i];
+                    if ( other === gossiper) continue;
                     link = new NetworkLink();
-                    other = gossipers[Math.random() * gossipers.length | 0];
                     gossiper.connectTo(other, link);
+                    links.push(link);
                 }
+                // random links
+                // for (var i = 0; i < 1; ++i) {
+                //     link = new NetworkLink();
+                //     other = gossipers[Math.random() * gossipers.length | 0];
+                //     gossiper.connectTo(other, link);
+                //     links.push(link);
+                // }
             }
 
             console.log(gossipers);
 
-            renderer = new TopologyRenderer(gossipers, link, {
+            renderer = new TopologyRenderer(gossipers, links, {
                 domRoot: document.getElementById('topology-root'),
                 layout: 'circle'
             })

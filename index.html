@@ -153,8 +153,9 @@
 
             getLinkedServerName(fromServer) {
                 if (!this.a || !this.b) throw new Error("Not attached");
-                if (this.a.name === fromServer.name) return this.b.name;
-                return this.a.name;
+                if (this.a.name === fromServer) return this.b.name;
+                else if (this.b.name === fromServer) return this.a.name;
+                console.error("should be impossible: ", fromServer, this);
             }
 
             // Simulates 1 tick of items moving through a network pipe, subject to latency + bandwidth limits.
@@ -259,7 +260,6 @@
 
             publishUpdate(message) {
                 for (const link of this.netLinks) {
-                    console.log("publishing update: ", link, message, this.netLinks);
                     link.send(message, link.getLinkedServerName(this.name));
                 }
             }
@@ -273,8 +273,6 @@
                         break;
                 }
             }
-
-
         }
 
         class TopologyRenderer {

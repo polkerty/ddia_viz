@@ -167,12 +167,6 @@
 
                     const [ax, ay] = centerCoordinatesByServerName[link.a.name], [bx, by] = centerCoordinatesByServerName[link.b.name];
 
-                    const m = (ay - by) / (ax - bx);
-                    // y = m(x - ax) + ay
-                    // y = mx - max + ay
-                    // b = ay - m * ax
-                    const b = ay - (m * ax);
-
                     // what is the angle between the two?
                     const [lx, ly] = ax < bx ? [ax, ay] : [bx, by];
                     const [rx, ry] = ax < bx ? [bx, by] : [ax, ay];
@@ -219,20 +213,23 @@
             // topology: random connections. 
             for (const gossiper of gossipers) {
                 // fully connected
-                for (var i = 0; i < gossipers.length; ++i) {
-                    other = gossipers[i];
-                    if ( other === gossiper) continue;
-                    link = new NetworkLink();
-                    gossiper.connectTo(other, link);
-                    links.push(link);
-                }
-                // random links
-                // for (var i = 0; i < 1; ++i) {
+                // for (var i = 0; i < gossipers.length; ++i) {
+                //     other = gossipers[i];
+                //     if ( other === gossiper) continue;
                 //     link = new NetworkLink();
-                //     other = gossipers[Math.random() * gossipers.length | 0];
                 //     gossiper.connectTo(other, link);
                 //     links.push(link);
                 // }
+                // random links
+                for (var i = 0; i < 1; ++i) {
+                    link = new NetworkLink();
+                    let other = gossiper;
+                    while (other == gossiper) {
+                        other = gossipers[Math.random() * gossipers.length | 0];
+                    }
+                    gossiper.connectTo(other, link);
+                    links.push(link);
+                }
             }
 
             console.log(gossipers);

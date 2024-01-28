@@ -36,10 +36,29 @@
             border: 1px solid black;
             position: absolute;
             z-index: 1;
+            overflow: visible;
+            display: flex;
+            align-items: center;
+            justify-content: center;;
+        }
+
+        .netlink-throughput {
+            height: 10px;
+            width: 10px;
+            background: pink;
+            margin: 3px;
+            border-radius: 50%;
         }
     </style>
 
     <script>
+        class Message {
+            constructor(type, data) {
+                this.type = type;
+                this.data = data;
+            }
+        }
+
         // Model different servers, and network connections.
         class Server {
             constructor(name) {
@@ -48,34 +67,212 @@
                 }
                 this.name = name;
                 this.netLinks = [];
+
+                this.incomingMessages = [];
             }
+
+            getDisplayData() {
+                return this.name;
+            }
+
 
             connectTo(otherServer, networkLink) {
                 // TODO: check for duplicate / conflicting connections.
                 // this is just a quick way to set up the topology.
-                networkLink.a = this;
-                networkLink.b = otherServer;
+                networkLink.attach(this, otherServer);
                 this.netLinks.push(networkLink);
                 otherServer.netLinks.push(networkLink);
+            }
+
+            receiveMessage(message) {
+                this.incomingMessages.push(message);
+            }
+
+
+            sendMessage(message, server) {
+                // find an appropriate netLink
+                // assume for now that we only try to talk to our peers.
+                const netLink = this.netLinks.find(n => n.a.name === server || n.b.name === server);
+                if (!netLink) throw new Error("No netlink found that can send directly to " + server);
+                netLink.send(message, server);
+
+            }
+
+            tick() {
+                // Process one of the messages and removing it from the queue. (Can only process 1 message a time)
+                if (this.incomingMessages.length) {
+                    const message = this.incomingMessages.shift();
+                    this.processMessage(message);
+                }
+            }
+
+            processMessage(message) {
+                // implement
             }
         }
 
         class NetworkLink {
-            constructor(name) {
+            constructor(name, options) {
                 this.name = name || Math.random().toString(16).slice(2);
                 this.a = null;
                 this.b = null;
+
+                this.serversByName = {};
+
+                this.usage = 0;
+
+                this.messageBufferQueue = {};
+                this.pipe = {};
+
+
+                // assume infinite buffer size for now
+                this.options = Object.assign({
+                    bandwidth: 1, // how many messages we can move through at once
+                    latency: 1, // how many ticks it takes for a message to move through
+                }, options);
             }
-        }
 
-        class DatabaseNode extends Server {
+            attach(a, b) {
+                this.a = a;
+                this.b = b;
+                this.messageBufferQueue[a.name] = [];
+                this.messageBufferQueue[b.name] = [];
+                this.serversByName[a.name] = a;
+                this.serversByName[b.name] = b;
+                this.pipe[a.name] = [];
+                this.pipe[b.name] = [];
+            }
 
+            send(message, server) {
+                if (server !== this.a.name && server !== this.b.name) {
+                    throw new Error("Netlink can't send message to location: " + server);
+                }
+                this.messageBufferQueue[server].push({ message });
+            }
+
+            getLinkedServerName(fromServer) {
+                if (!this.a || !this.b) throw new Error("Not attached");
+                if (this.a.name === fromServer.name) return this.b.name;
+                return this.a.name;
+            }
+
+            // Simulates 1 tick of items moving through a network pipe, subject to latency + bandwidth limits.
+            tick() {
+                for (const [serverName, queue] of Object.entries(this.pipe)) {
+                    // 1. Find all the messages with the highest progress (simulating latency)
+                    queue.sort((a, b) => b.progress - a.progress);
+                    const toIncrement = queue.slice(0, this.options.bandwidth);
+                    for (const item of toIncrement) {
+                        item.progress++;
+                    }
+
+                    const ready = queue.filter(item => item.progress >= this.options.latency);
+                    this.pipe[serverName] = queue.filter(item => item.progress < this.options.latency);
+
+                    for (const { message } of ready) {
+                        this.serversByName[serverName].receiveMessage(message);
+                    }
+                }
+
+                // start processing items sent from queues
+                for (const [serverName, buffer] of Object.entries(this.messageBufferQueue)) {
+                    for (const { message } of buffer) {
+                        this.pipe[serverName].push({ message, progress: 0 });
+                    }
+                    this.messageBufferQueue[serverName] = [];
+                }
+            }
         }
 
         class GossipProtocolNode extends Server {
             constructor(name) {
                 super(name);
+
+                this.kvStore = {};
+
+                this.WAL = [];
+
+                this.versionVectorsByKey = {};
+
             }
+
+            mergeVersionVectors(x, y) {
+                const mergedKeys = [...new Set(Object.keys(x ?? {}).concat(Object.keys(y ?? {})))];
+                const merged = {};
+                for (const key of mergedKeys) {
+                    const maxVersion = Math.max(x?.[key] ?? 0, y?.[key] ?? 0);
+                    merged[key] = maxVersion;
+                }
+                return merged;
+            }
+
+            compareVersionVectors(x, y) {
+                const mergedKeys = [...new Set(Object.keys(x ?? {}).concat(Object.keys(y ?? {})))];
+                for (const key of mergedKeys) {
+                    if (x?.[key] !== y?.[key]) return false;
+                }
+                return true;
+            }
+
+            getDisplayData() {
+                return JSON.stringify(this.kvStore);
+            }
+
+            update(key, value, externalVersionVector) {
+                // if (this.versionVectorsByKey?.[key]?.this.name &&
+                //     previousVersionVector[this.name] === this.versionVectorsByKey?.[key]?.[this.name]) {
+                //         return; // short-circuit in case version matches our own.
+                //         // TODO: synchronize version vectors first in this case.
+                // }
+                this.WAL.push([key, value]);
+                const versionVector = this.versionVectorsByKey[key] ?? {
+                    [this.name]: 0
+                };
+
+                const previousLocalVersion = versionVector[key]?.[this.name] ?? 0;
+                const previousLocalValue = this.kvStore[key]?.[previousLocalVersion] ?? null;
+
+                if (value !== previousLocalValue) {
+                    versionVector[this.name]++;
+                }
+
+                const newVersionVector = externalVersionVector ? this.mergeVersionVectors(versionVector, externalVersionVector) : versionVector;
+
+                if (this.compareVersionVectors(externalVersionVector, newVersionVector)) {
+                    return; // no change, so nothing to do.
+                }
+
+                this.versionVectorsByKey[key] = newVersionVector;
+                this.kvStore[key] = this.kvStore[key] ?? {};
+                this.kvStore[key][versionVector[this.name]] = value;
+
+
+                this.publishUpdate(
+                    new Message('set-key', {
+                        key,
+                        value,
+                        externalVersionVector: newVersionVector
+                    })
+                )
+            }
+
+            publishUpdate(message) {
+                for (const link of this.netLinks) {
+                    link.send(message, link.getLinkedServerName(this.name));
+                }
+            }
+
+            processMessage(message) {
+                switch (message.type) {
+                    case 'set-key':
+                        this.update(message.data.key, message.data.value, message.data.externalVersionVector);
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+
         }
 
         class TopologyRenderer {
@@ -131,10 +328,10 @@
                 const centerCoordinatesByServerName = {};
 
                 const [gx, gy] = this.translateCoords(
-                        this.circleBottomLeft([0, 0], greatCircleDiameter),
-                        frameSize,
-                        frameSize
-                    );
+                    this.circleBottomLeft([0, 0], greatCircleDiameter),
+                    frameSize,
+                    frameSize
+                );
 
                 html += `<div class="topology" style="width:${frameSize}px; height: ${frameSize}px">`;
                 html += `<div class="topology__circle-root" style="width:${greatCircleDiameter}px; height: ${greatCircleDiameter}px; left: ${gx}px; bottom: ${gy}px;">`;
@@ -155,13 +352,13 @@
                     );
 
                     html += `<div class="server circle" style="left: ${dx}px; bottom: ${dy}px; width: ${smallCircleDiameter}px; height: ${smallCircleDiameter}px">`;
-                    html += this.servers[i].name;
+                    html += this.servers[i].getDisplayData();
                     html += '</div>';
 
                 }
 
                 // now to draw the network links. 
-                for ( const link of this.links) {
+                for (const link of this.links) {
                     // Draw a line from the center of a's circle to the center of b's circle.
                     // (but, ends at the edges of the circles.)
 
@@ -173,10 +370,10 @@
 
 
                     const opposite = Math.abs(ry - ly);
-                    const hypotenuse = Math.sqrt((ax - bx)*(ax - bx) + (ay - by)*(ay - by));
-                    let angle = Math.asin(opposite/hypotenuse);
+                    const hypotenuse = Math.sqrt((ax - bx) * (ax - bx) + (ay - by) * (ay - by));
+                    let angle = Math.asin(opposite / hypotenuse);
 
-                    if ( ly < ry ) {
+                    if (ly < ry) {
                         angle = -angle;
                     }
                     angle = Math.round(angle * 1000) / 1000;
@@ -187,7 +384,14 @@
                         frameSize
                     );
 
-                    html += `<div class='link' data-id="${link.name}" style="transform: rotate(${angle}rad); width: ${Math.round(hypotenuse)}px; left: ${dx}px; bottom: ${dy}px;" ></div>`
+                    html += `<div class='link' data-id="${link.name}" style="transform: rotate(${angle}rad); width: ${Math.round(hypotenuse)}px; left: ${dx}px; bottom: ${dy}px;" >`;
+
+                    for (const [server, pipe] of Object.entries(link.pipe)) {
+                        for ( const message of pipe) {
+                            html += `<div class="netlink-throughput" data-content=${JSON.stringify(message.data, null, 2)}></div>`;
+                        }
+                    }
+                    html += `</div>`
 
                 }
 
@@ -200,13 +404,30 @@
 
         }
 
+        class UniverseCausalityController {
+            constructor(objects, renderer) {
+                this.objects = objects;
+                this.renderer = renderer;
+
+                this.time = 0;
+                this.renderer.render(); // t = 0
+            }
+
+            tick() {
+                this.time++;
+                console.log("T = ", this.time);
+                this.objects.forEach(item => item.tick());
+                this.renderer.render();
+            }
+        }
+
 
         // A gossip protocol
         function main() {
             gossipers = [];
             links = [];
 
-            for (let i = 0; i < 10; ++i) {
+            for (let i = 0; i < 16; ++i) {
                 gossipers.push(new GossipProtocolNode());
             }
 
@@ -224,21 +445,22 @@
                 for (var i = 0; i < 1; ++i) {
                     link = new NetworkLink();
                     let other = gossiper;
-                    while (other == gossiper) {
+                    while (other == gossiper || other.netLinks.find(n => n.a === gossiper || n.b === gossiper)) {
                         other = gossipers[Math.random() * gossipers.length | 0];
                     }
                     gossiper.connectTo(other, link);
+                    other.connectTo(gossiper, link);
                     links.push(link);
                 }
             }
-
-            console.log(gossipers);
 
             renderer = new TopologyRenderer(gossipers, links, {
                 domRoot: document.getElementById('topology-root'),
                 layout: 'circle'
             })
-            renderer.render();
+
+            // Gossipers send items before processing by any link in a given instant of time.
+            window.controller = new UniverseCausalityController(gossipers.concat(links), renderer);
 
         }
 
@@ -247,6 +469,8 @@
 </head>
 
 <body>
+
+    <button onclick="window.controller.tick()">Next</button>
 
     <div id="topology-root">
 

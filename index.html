@@ -79,6 +79,7 @@
             connectTo(otherServer, networkLink) {
                 // TODO: check for duplicate / conflicting connections.
                 // this is just a quick way to set up the topology.
+                if (this.netLinks.find(n => n.name === networkLink.name)) return;
                 networkLink.attach(this, otherServer);
                 this.netLinks.push(networkLink);
                 otherServer.netLinks.push(networkLink);
@@ -258,6 +259,7 @@
 
             publishUpdate(message) {
                 for (const link of this.netLinks) {
+                    console.log("publishing update: ", link, message, this.netLinks);
                     link.send(message, link.getLinkedServerName(this.name));
                 }
             }
@@ -388,7 +390,7 @@
 
                     for (const [server, pipe] of Object.entries(link.pipe)) {
                         for ( const message of pipe) {
-                            html += `<div class="netlink-throughput" data-content=${JSON.stringify(message.data, null, 2)}></div>`;
+                            html += `<div class="netlink-throughput" data-content=${JSON.stringify(message.message.data, null, 2)}></div>`;
                         }
                     }
                     html += `</div>`

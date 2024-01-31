@@ -12,7 +12,8 @@ So far (as of 1/26/24), this contains:
 
 * A visualization of a topology of servers and network links. The servers are placed in a circle, and any of them can be directly connected by a network link.
 * A concept of "time", which influences message-passing over the network: network links have latency (how long it takes a message to pass through) and bandwidth (how many messages can pass through at once).
-* A (buggy) implementation of a gossip protocol for propagating key-value stores and version vectors to deal with conflicts.
+* An implementation of a gossip protocol for propagating key-value stores with dotted version vectors to track causality relationships
+and conflicts. I found [this post from Riak](https://riak.com/posts/technical/vector-clocks-revisited-part-2-dotted-version-vectors/index.html?p=9929.html) helpful.
 
 ## Technical notes
 In order to have the most fun here, I'm implementing the code and visualizations as I used to do 10 years ago. A single

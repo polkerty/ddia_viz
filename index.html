@@ -39,7 +39,8 @@
             overflow: visible;
             display: flex;
             align-items: center;
-            justify-content: center;;
+            justify-content: center;
+            ;
         }
 
         .netlink-throughput {
@@ -63,7 +64,7 @@
         class Server {
             constructor(name) {
                 if (!name) {
-                    name = Math.random().toString(16).slice(2);
+                    name = Math.random().toString(16).slice(2, 6);
                 }
                 this.name = name;
                 this.netLinks = [];
@@ -114,7 +115,7 @@
 
         class NetworkLink {
             constructor(name, options) {
-                this.name = name || Math.random().toString(16).slice(2);
+                this.name = name || Math.random().toString(16).slice(2, 6);
                 this.a = null;
                 this.b = null;
 
@@ -186,6 +187,56 @@
             }
         }
 
+        class VersionVector {
+            constructor(byNode) {
+                this.byNode = byNode ?? {};
+            }
+
+            // -1: this happened before; 0: concurrent; 1: other happened before.
+            compareTo(other) {
+                // same, because from same event.
+                let thisLessCount = 0, sameCount = 0, otherLessCount = 0;
+
+                const keys = [... new Set(Object.keys(this.byNode).concat(Object.keys(other.byNode)))];
+                if (!keys.length) return 0; // trivially concurrent
+
+                for (const key of keys) {
+                    const thisValue = this.byNode[key];
+                    const otherValue = other.byNode[key];
+
+                    if (thisValue === undefined || otherValue === undefined) {
+                        sameCount++; // these values may be treated as concurrent
+                        continue;
+                    }
+                    if (thisValue < otherValue) thisLessCount++;
+                    else if (otherValue < thisValue) otherLessCount++;
+                    else sameCount++;
+                }
+                if (thisLessCount > 0 && otherLessCount > 0) return 0; // both have some more recent versions
+                else if (thisLessCount > 0 && otherLessCount === 0) return -1;
+                else if (thisLessCount === 0 && otherLessCount > 0) return 1;
+                else if (thisLessCount === 0 && otherLessCount === 0) return 0;
+                throw new Error("Failed to compare DVVS");
+            }
+
+            mergeWith(other) {
+                const mergedKeys = [...new Set(Object.keys(other.byNode).concat(Object.keys(this.byNode)))];
+                const merged = {};
+                for (const key of mergedKeys) {
+                    const maxVersion = Math.max(other.byNode[key] ?? 0, this.byNode[key] ?? 0);
+                    merged[key] = maxVersion;
+                }
+                return new VersionVector(merged);
+            }
+
+            increment(actor) {
+                // immutable
+                const nodesCopy = JSON.parse(JSON.stringify(this.byNode));
+                nodesCopy[actor] = (nodesCopy[actor] ?? 0) + 1;
+                return new VersionVector(nodesCopy);
+            }
+        }
+
         class GossipProtocolNode extends Server {
             constructor(name) {
                 super(name);
@@ -196,16 +247,6 @@
 
                 this.versionVectorsByKey = {};
 
-            }
-
-            mergeVersionVectors(x, y) {
-                const mergedKeys = [...new Set(Object.keys(x ?? {}).concat(Object.keys(y ?? {})))];
-                const merged = {};
-                for (const key of mergedKeys) {
-                    const maxVersion = Math.max(x?.[key] ?? 0, y?.[key] ?? 0);
-                    merged[key] = maxVersion;
-                }
-                return merged;
             }
 
             compareVersionVectors(x, y) {
@@ -220,40 +261,68 @@
                 return JSON.stringify(this.kvStore);
             }
 
-            update(key, value, externalVersionVector) {
-                // if (this.versionVectorsByKey?.[key]?.this.name &&
-                //     previousVersionVector[this.name] === this.versionVectorsByKey?.[key]?.[this.name]) {
-                //         return; // short-circuit in case version matches our own.
-                //         // TODO: synchronize version vectors first in this case.
-                // }
-                this.WAL.push([key, value]);
-                const versionVector = this.versionVectorsByKey[key] ?? {
-                    [this.name]: 0
-                };
+            update(key, value, updateDot, lastSeenVersionVector) {
 
-                const previousLocalVersion = versionVector[key]?.[this.name] ?? 0;
-                const previousLocalValue = this.kvStore[key]?.[previousLocalVersion] ?? null;
+                lastSeenVersionVector = lastSeenVersionVector || new VersionVector(); // default value, for new updates, is concurrent with everything.
+                const currentVersionVector = this.versionVectorsByKey[key] ?? new VersionVector();
+                // const combinedVersionVector = currentVersionVector.mergeWith(lastSeenVersionVector);
 
-                if (value !== previousLocalValue) {
-                    versionVector[this.name]++;
+                const newValueSet = [];
+                const existingValues = this.kvStore[key] ?? [];
+
+                let retainNewValue = existingValues.length === 0; // if no values yet, of course retain. Otherwise, need to compare with each dot.
+                for (const { value, dot } of existingValues) {
+                    // now, any dot is concurrent with itself. If we see it,
+                    // set "retainNewValue" to false and break, as there's nothing to do.
+                    if (updateDot[0] === dot[0] && updateDot[1] === dot[1]) {
+                        retainNewValue = false;
+                        break;
+                    }
+                    const comparison = lastSeenVersionVector.compareTo(new VersionVector({[dot[0]]: dot[1]}));
+
+                    if (comparison < 0) {
+                        // incoming update happened-before this value, so we can preserve that value.
+                        // we also see no reason (yet) to retain the incoming update.
+                        newValueSet.push({ value, dot });
+                    } else if (comparison === 0) {
+                        // incoming update is concurrent with this value 
+                        newValueSet.push({ value, dot });
+                        retainNewValue = true;
+                    } else {
+                        // incoming update happened after this value
+                        // replace
+                        retainNewValue = true;
+                    }
                 }
 
-                const newVersionVector = externalVersionVector ? this.mergeVersionVectors(versionVector, externalVersionVector) : versionVector;
-
-                if (this.compareVersionVectors(externalVersionVector, newVersionVector)) {
-                    return; // no change, so nothing to do.
+                if (!retainNewValue) {
+                    // there are no updates to make. Combine the version vectors just in case we increment some fields.
+                    this.versionVectorsByKey[key] = currentVersionVector.mergeWith(lastSeenVersionVector);
+                    return;
                 }
 
+                // determine the dot for the new value.
+                let isActor = false;
+                if (!updateDot) {
+                    // this represents a new update, but since there's no update dot, WE have to store it.
+                    const maxLocalVersion = currentVersionVector[this.name] ?? 0;
+                    updateDot = [this.name, maxLocalVersion + 1];
+                    isActor = true;
+                }
+                newValueSet.push({ value, dot: updateDot });
+
+                this.WAL.push({ value, key, updateDot, lastSeenVersionVector: lastSeenVersionVector });
+                this.kvStore[key] = newValueSet;
+                const incrementedVersion = isActor ? currentVersionVector.increment(this.name) : currentVersionVector;
+                const newVersionVector = incrementedVersion.mergeWith(lastSeenVersionVector);
                 this.versionVectorsByKey[key] = newVersionVector;
-                this.kvStore[key] = this.kvStore[key] ?? {};
-                this.kvStore[key][versionVector[this.name]] = value;
-
 
                 this.publishUpdate(
                     new Message('set-key', {
                         key,
                         value,
-                        externalVersionVector: newVersionVector
+                        updateDot,
+                        lastSeenVersionVector: newVersionVector
                     })
                 )
             }
@@ -267,7 +336,7 @@
             processMessage(message) {
                 switch (message.type) {
                     case 'set-key':
-                        this.update(message.data.key, message.data.value, message.data.externalVersionVector);
+                        this.update(message.data.key, message.data.value, message.data.updateDot, message.data.lastSeenVersionVector);
                         break;
                     default:
                         break;
@@ -387,7 +456,7 @@
                     html += `<div class='link' data-id="${link.name}" style="transform: rotate(${angle}rad); width: ${Math.round(hypotenuse)}px; left: ${dx}px; bottom: ${dy}px;" >`;
 
                     for (const [server, pipe] of Object.entries(link.pipe)) {
-                        for ( const message of pipe) {
+                        for (const message of pipe) {
                             html += `<div class="netlink-throughput" data-content=${JSON.stringify(message.message.data, null, 2)}></div>`;
                         }
                     }

@@ -274,7 +274,7 @@
                 for (const { value, dot } of existingValues) {
                     // now, any dot is concurrent with itself. If we see it,
                     // set "retainNewValue" to false and break, as there's nothing to do.
-                    if (updateDot[0] === dot[0] && updateDot[1] === dot[1]) {
+                    if (updateDot && updateDot[0] === dot[0] && updateDot[1] === dot[1]) {
                         retainNewValue = false;
                         break;
                     }

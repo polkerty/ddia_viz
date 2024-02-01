@@ -263,9 +263,16 @@
 
             update(key, value, updateDot, lastSeenVersionVector) {
 
+
                 lastSeenVersionVector = lastSeenVersionVector || new VersionVector(); // default value, for new updates, is concurrent with everything.
                 const currentVersionVector = this.versionVectorsByKey[key] ?? new VersionVector();
-                // const combinedVersionVector = currentVersionVector.mergeWith(lastSeenVersionVector);
+                let isActor = false;
+                if (!updateDot) {
+                    // this represents a new update, but since there's no update dot, WE have to store it.
+                    const maxLocalVersion = currentVersionVector.byNode[this.name] ?? 0;
+                    updateDot = [this.name, maxLocalVersion + 1];
+                    isActor = true;
+                }
 
                 const newValueSet = [];
                 const existingValues = this.kvStore[key] ?? [];
@@ -278,7 +285,7 @@
                         retainNewValue = false;
                         break;
                     }
-                    const comparison = lastSeenVersionVector.compareTo(new VersionVector({[dot[0]]: dot[1]}));
+                    const comparison = lastSeenVersionVector.compareTo(new VersionVector({ [dot[0]]: dot[1] }));
 
                     if (comparison < 0) {
                         // incoming update happened-before this value, so we can preserve that value.
@@ -302,13 +309,6 @@
                 }
 
                 // determine the dot for the new value.
-                let isActor = false;
-                if (!updateDot) {
-                    // this represents a new update, but since there's no update dot, WE have to store it.
-                    const maxLocalVersion = currentVersionVector[this.name] ?? 0;
-                    updateDot = [this.name, maxLocalVersion + 1];
-                    isActor = true;
-                }
                 newValueSet.push({ value, dot: updateDot });
 
                 this.WAL.push({ value, key, updateDot, lastSeenVersionVector: lastSeenVersionVector });
